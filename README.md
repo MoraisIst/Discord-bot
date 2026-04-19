@@ -97,8 +97,6 @@ DISCORD_TOKEN=your_bot_token_here
 
 Replace `your_bot_token_here` with the token you copied in Step 3.
 
-**⚠️ IMPORTANT:** Never share this token or commit `.env` to git!
-
 ### Step 5: Add Bot to Your Server
 
 1. In Developer Portal, go to **OAuth2** → **URL Generator**
@@ -121,7 +119,7 @@ python discord_bot.py
 
 You should see:
 ```
-✓ Bot logged in as YourBotName#1234
+   Bot logged in as YourBotName#1234
 ```
 
 **Success!** Your bot is now running. Go to your Discord server and try `!join`.
