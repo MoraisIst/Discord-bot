@@ -2,14 +2,6 @@
 
 A Discord bot that streams audio from YouTube directly to voice channels. Built with discord.py and yt-dlp.
 
-## Features
-
-✓ Stream YouTube videos and audio to Discord voice channels  
-✓ Search for songs by title  
-✓ Queue system for multiple songs  
-✓ Play, pause, resume, skip, and stop controls  
-✓ Automatic error handling and recovery  
-
 ## Quick Start
 
 1. Install system dependencies (see **System Requirements** below)
