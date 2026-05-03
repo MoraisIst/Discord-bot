@@ -9,14 +9,12 @@ app = FastAPI()
 
 def get_cog() -> MusicCog:
     try:
-        music_cog = MusicCog()
+        music_cog = MusicCog.get_instance()
         if music_cog is None:
             raise HTTPException(status_code=503, detail="MusicCog not found")
-        if music_cog.is_inVoice():
-            return HTTPException(
-                status_code=503, detail="Bot is currently in a voice channel"
-            )
         return music_cog
+    except ValueError:
+        raise HTTPException(status_code=503, detail="Bot not initialized yet")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -59,53 +57,8 @@ async def play_song(command: Command):
     url = command.payload.get("url")
     if not url:
         raise HTTPException(status_code=400, detail="URL is required to play a song")
-    await music_cog.play(url)
-    return {"status": "success", "message": f"Playing song from URL: {url}"}
-
-
-@app.post("/skip")
-async def skip_song():
-    music_cog = get_cog()
-    await music_cog.skip()
-    return {"status": "success", "message": "Skipped current song"}
-
-
-@app.post("/stop")
-async def stop_music():
-    music_cog = get_cog()
-    await music_cog.stop()
-    return {"status": "success", "message": "Stopped music and cleared queue"}
-
-
-@app.post("/volume")
-async def set_volume(command: Command):
-    music_cog = get_cog()
-    volume = command.payload.get("volume")
-    if volume is None or not (0 <= volume <= 100):
-        raise HTTPException(status_code=400, detail="Volume must be between 0 and 100")
-    await music_cog.set_volume(volume)
-    return {"status": "success", "message": f"Volume set to {volume}"}
-
-
-@app.post("/pause")
-async def pause_music():
-    music_cog = get_cog()
-    await music_cog.pause()
-    return {"status": "success", "message": "Paused music"}
-
-
-@app.post("/resume")
-async def resume_music():
-    music_cog = get_cog()
-    await music_cog.resume()
-    return {"status": "success", "message": "Resumed music"}
-
-
-@app.post("/clear")
-async def clear_queue():
-    music_cog = get_cog()
-    await music_cog.clear_queue()
-    return {"status": "success", "message": "Cleared music queue"}
+    success, message = await music_cog._play_impl(url)
+    return {"status": f"{success}", "message": f"{message}"}
 
 
 @app.post("/command")

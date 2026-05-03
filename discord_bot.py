@@ -206,6 +206,27 @@ class MusicCog(commands.Cog):
         else:
             self.current = None
 
+    async def _play_impl(self, query: str) -> tuple[bool, str]:
+        """Internal method to handle play logic."""
+        if not self._vc or not self._vc.is_connected():
+            return False, "Not connected to a voice channel."
+        try:
+            info = await asyncio.get_event_loop().run_in_executor(
+                None, get_audio_info, query
+            )
+        except Exception as e:
+            return False, f"Error fetching audio: {e}"
+
+        if self._vc.is_playing():
+            self.queue.append(info)
+            return True, f"Added to queue: **{info.title}**"
+        else:
+            source = discord.FFmpegPCMAudio(info.url, **FFMPEG_OPTIONS)
+            self.current = info
+            self._vc.play(source, after=self._play_next)
+            self._last_play_time = time.time()
+            return True, f"Now playing: **{info.title}**"
+
     # ========================================================================
     # COMMANDS
     # ========================================================================
@@ -228,26 +249,8 @@ class MusicCog(commands.Cog):
 
         Usage: !play <url or search term>
         """
-        if not await self._ensure_connected(ctx):
-            return
-
-        async with ctx.typing():
-            try:
-                info = await asyncio.get_event_loop().run_in_executor(
-                    None, get_audio_info, query
-                )
-            except Exception as e:
-                await ctx.send(f"Error fetching audio: {e}")
-                return
-
-        if self._vc.is_playing():
-            self.queue.append(info)
-            await ctx.send(f"Added to queue: **{info.title}**")
-        else:
-            self.current = info
-            source = discord.FFmpegPCMAudio(info.url, **FFMPEG_OPTIONS)
-            self._vc.play(source, after=self._play_next)
-            await ctx.send(f"Now playing: **{info.title}**")
+        success, message = await self._play_impl(query)
+        await ctx.send(message)
 
     @commands.command(name="skip")
     async def skip(self, ctx: commands.Context) -> None:
