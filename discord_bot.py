@@ -7,11 +7,28 @@ import sys
 import traceback
 from collections import deque
 from typing import Optional
-
+import time
+import api
+import uvicorn
 import discord
 import yt_dlp
 from discord.ext import commands
 from dotenv import load_dotenv
+
+# ============================================================================
+# DATA MODELS
+# ============================================================================
+
+
+class Track:
+    """Represents a music track with metadata."""
+
+    def __init__(self, url: str, title: str, duration: int, thumbnail: Optional[str]):
+        self.url = url
+        self.title = title
+        self.duration = duration
+        self.thumbnail = thumbnail
+
 
 # ============================================================================
 # CONFIGURATION
@@ -48,7 +65,7 @@ def parse_input(query: str) -> str:
     return f"ytsearch:{query}"
 
 
-def get_audio_info(query: str) -> dict:
+def get_audio_info(query: str) -> Track:
     """Extract audio URL and metadata from YouTube."""
     search = parse_input(query)
 
@@ -57,12 +74,13 @@ def get_audio_info(query: str) -> dict:
         if "entries" in info:
             info = info["entries"][0]
 
-        return {
-            "url": info["url"],
-            "title": info.get("title", "Unknown"),
-            "duration": info.get("duration", 0),
-            "thumbnail": info.get("thumbnail"),
-        }
+        return Track(
+            url=info["url"],
+            title=info.get("title", "Unknown"),
+            duration=info.get("duration", 0),
+            thumbnail=info.get("thumbnail"),
+        )
+
 
 # ============================================================================
 # MUSIC COG
@@ -72,11 +90,41 @@ def get_audio_info(query: str) -> dict:
 class MusicCog(commands.Cog):
     """Handles music playback in voice channels."""
 
+    _instance: Optional["MusicCog"] = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super(MusicCog, cls).__new__(cls)
+        return cls._instance
+
+    @classmethod
+    def get_instance(cls) -> "MusicCog":
+        if cls._instance is None:
+            raise ValueError("MusicCog instance not created yet.")
+        return cls._instance
+
     def __init__(self, bot: commands.Bot):
+        if hasattr(self, "_initialized") and self._initialized:
+            return
         self.bot = bot
-        self.queue: deque[dict] = deque()
-        self.current: Optional[dict] = None
+        self.queue: deque[Track] = deque()
+        self.current: Optional[Track] = None
         self._vc: Optional[discord.VoiceClient] = None
+        self.track_time: float = 0
+        self._last_play_time: float = 0
+
+    def is_inVoice(self) -> bool:
+        """Check if bot is currently connected to a voice channel."""
+        return self._vc is not None and self._vc.is_connected()
+
+    def get_playback_time(self) -> float:
+        """Calculate current playback time of the track."""
+        if not self._vc or not self.current:
+            return 0.0
+        if self._vc.is_paused():
+            return self.track_time
+
+        elapsed = time.time() - self._last_play_time
 
     async def _cleanup(self) -> None:
         """Disconnect from voice and clear playback state."""
@@ -103,11 +151,7 @@ class MusicCog(commands.Cog):
         target_channel = ctx.author.voice.channel
 
         # Already connected to correct channel
-        if (
-            self._vc
-            and self._vc.is_connected()
-            and self._vc.channel == target_channel
-        ):
+        if self._vc and self._vc.is_connected() and self._vc.channel == target_channel:
             return True
 
         # Move to different channel
@@ -154,7 +198,7 @@ class MusicCog(commands.Cog):
         if self.queue:
             self.current = self.queue.popleft()
             try:
-                source = discord.FFmpegPCMAudio(self.current["url"], **FFMPEG_OPTIONS)
+                source = discord.FFmpegPCMAudio(self.current.url, **FFMPEG_OPTIONS)
                 self._vc.play(source, after=self._play_next)
             except Exception as e:
                 print(f"[PLAYBACK] Error starting next track: {e}")
@@ -198,12 +242,12 @@ class MusicCog(commands.Cog):
 
         if self._vc.is_playing():
             self.queue.append(info)
-            await ctx.send(f"Added to queue: **{info['title']}**")
+            await ctx.send(f"Added to queue: **{info.title}**")
         else:
             self.current = info
-            source = discord.FFmpegPCMAudio(info["url"], **FFMPEG_OPTIONS)
+            source = discord.FFmpegPCMAudio(info.url, **FFMPEG_OPTIONS)
             self._vc.play(source, after=self._play_next)
-            await ctx.send(f"Now playing: **{info['title']}**")
+            await ctx.send(f"Now playing: **{info.title}**")
 
     @commands.command(name="skip")
     async def skip(self, ctx: commands.Context) -> None:
@@ -249,7 +293,10 @@ class MusicCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(
-        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
     ) -> None:
         """Handle bot being kicked/disconnected from voice."""
         # Only handle bot's own state changes
@@ -262,10 +309,13 @@ class MusicCog(commands.Cog):
             await self._cleanup()
 
     @play.error
-    async def play_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+    async def play_error(
+        self, ctx: commands.Context, error: commands.CommandError
+    ) -> None:
         """Handle errors in play command."""
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.send("Usage: `!play <url or search term>`")
+
 
 # ============================================================================
 # BOT SETUP
@@ -291,14 +341,34 @@ async def main() -> None:
         if message.author == bot.user:
             return
         await bot.process_commands(message)
-    
+
     @bot.event
     async def on_error(event, *args, **kwargs):
         print(f"Error in {event}: {sys.exc_info()}")
-    
+
     await bot.add_cog(MusicCog(bot))
-    await bot.start(TOKEN)
+
+    config = uvicorn.Config(api.app, host="0.0.0.0", port=8001, log_level="warning")
+    server = uvicorn.Server(config)
+
+    try:
+        await asyncio.gather(server.serve(), bot.start(TOKEN))
+    except KeyboardInterrupt:
+        print("Shutting down gracefully...")
+    except Exception as e:
+        print(f"Error starting bot or API server: {e}")
+        traceback.print_exc()
+    finally:
+        await bot.close()
+        await server.shutdown()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        traceback.print_exc()

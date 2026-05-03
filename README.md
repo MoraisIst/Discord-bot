@@ -12,7 +12,7 @@ A Discord bot that streams audio from YouTube directly to voice channels. Built 
 
 ## Quick Start
 
-1. Install system dependencies (see **System Requirements** below)
+1. **Install system dependencies FIRST** (see **System Requirements** below)
 2. Clone/extract this repository
 3. Follow the **Installation** steps below
 4. Run the bot with `python discord_bot.py`
