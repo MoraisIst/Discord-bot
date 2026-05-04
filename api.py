@@ -1,20 +1,25 @@
 from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import asyncio
 import api_dto
 from discord_bot import MusicCog
 
 app = FastAPI()
 
 
-def get_cog() -> MusicCog:
+async def get_cog() -> MusicCog:
     try:
-        music_cog = MusicCog.get_instance()
-        if music_cog is None:
+        music_cog_instance: MusicCog = app.state.music_cog_instance
+        if not music_cog_instance:
             raise HTTPException(status_code=503, detail="MusicCog not found")
-        return music_cog
+        return music_cog_instance
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=503, detail="Bot is taking too long to initialize"
+        )
     except ValueError:
-        raise HTTPException(status_code=503, detail="Bot not initialized yet")
+        raise HTTPException(status_code=503, detail="MusicCog not initialized")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -26,7 +31,7 @@ class Command(BaseModel):
 
 @app.get("/state", response_model=api_dto.BotStateDTO)
 async def get_bot_state():
-    music_cog = get_cog()
+    music_cog = await get_cog()
     state = api_dto.BotStateDTO(
         is_playing=music_cog.is_playing,
         current_song=music_cog.current_song,
@@ -38,7 +43,7 @@ async def get_bot_state():
 
 @app.get("/queue", response_model=List[api_dto.TrackDTO])
 async def get_queue():
-    music_cog = get_cog()
+    music_cog = await get_cog()
     queue = [
         api_dto.TrackDTO(
             title=track.title,
@@ -53,7 +58,7 @@ async def get_queue():
 
 @app.post("/play")
 async def play_song(command: Command):
-    music_cog = get_cog()
+    music_cog = await get_cog()
     url = command.payload.get("url")
     if not url:
         raise HTTPException(status_code=400, detail="URL is required to play a song")

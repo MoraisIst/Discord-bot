@@ -40,12 +40,12 @@ if not TOKEN:
     raise ValueError("DISCORD_TOKEN not set in .env file")
 
 YDL_OPTIONS = {
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "quiet": True,
-    "no_warnings": True,
+    "format": "best",
+    "quiet": False,
+    "no_warnings": False,
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
+    "socket_timeout": 30,
 }
 
 FFMPEG_OPTIONS = {
@@ -61,6 +61,15 @@ FFMPEG_OPTIONS = {
 def parse_input(query: str) -> str:
     """Convert user input to yt-dlp compatible search query."""
     if query.startswith(("https://", "http://", "www.")):
+        # Strip playlist parameters from YouTube URLs
+        if "youtube.com" in query or "youtu.be" in query:
+            # Keep only the video ID (v= parameter)
+            if "?v=" in query:
+                video_id = query.split("?v=")[1].split("&")[0]
+                return f"https://www.youtube.com/watch?v={video_id}"
+            elif "youtu.be/" in query:
+                video_id = query.split("youtu.be/")[1].split("?")[0]
+                return f"https://www.youtube.com/watch?v={video_id}"
         return query
     return f"ytsearch:{query}"
 
@@ -90,22 +99,7 @@ def get_audio_info(query: str) -> Track:
 class MusicCog(commands.Cog):
     """Handles music playback in voice channels."""
 
-    _instance: Optional["MusicCog"] = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(MusicCog, cls).__new__(cls)
-        return cls._instance
-
-    @classmethod
-    def get_instance(cls) -> "MusicCog":
-        if cls._instance is None:
-            raise ValueError("MusicCog instance not created yet.")
-        return cls._instance
-
     def __init__(self, bot: commands.Bot):
-        if hasattr(self, "_initialized") and self._initialized:
-            return
         self.bot = bot
         self.queue: deque[Track] = deque()
         self.current: Optional[Track] = None
@@ -335,7 +329,7 @@ async def main() -> None:
 
     @bot.event
     async def on_ready() -> None:
-        """Print login confirmation."""
+        """Print login confirmation and signal readiness."""
         print(f"✓ Bot logged in as {bot.user}")
 
     @bot.event
@@ -349,9 +343,12 @@ async def main() -> None:
     async def on_error(event, *args, **kwargs):
         print(f"Error in {event}: {sys.exc_info()}")
 
-    await bot.add_cog(MusicCog(bot))
+    music_cog = MusicCog(bot)
+    await bot.add_cog(music_cog)
 
     config = uvicorn.Config(api.app, host="0.0.0.0", port=8001, log_level="warning")
+    api.app.state.bot = bot
+    api.app.state.music_cog_instance = music_cog
     server = uvicorn.Server(config)
 
     try:
